@@ -64,4 +64,42 @@ router.get("/profile", async (req, res) => {
   }
 });
 
+// In-memory stream client reference
+let streamClient = null;
+
+// POST /api/whales/watch
+// Start watching a list of wallets
+router.post("/watch", async (req, res) => {
+  try {
+    const { wallets } = req.body;
+    if (!wallets || wallets.length === 0) {
+      return res.status(400).json({ error: "Wallet addresses required" });
+    }
+
+    // Import streaming service
+    const { startWalletStream, addWallets } = await import("../services/streaming.js");
+
+    addWallets(wallets);
+    streamClient = startWalletStream(wallets, (signal) => {
+      console.log("New signal:", signal.summary);
+    });
+
+    res.json({ success: true, message: `Watching ${wallets.length} wallets`, wallets });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to start stream" });
+  }
+});
+
+// GET /api/whales/signals
+// Get latest signals
+router.get("/signals", async (req, res) => {
+  try {
+    const { signals } = await import("../services/streaming.js");
+    res.json({ success: true, signals });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch signals" });
+  }
+});
+
 export default router;
