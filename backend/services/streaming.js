@@ -4,7 +4,7 @@ import dotenv from "dotenv";
 dotenv.config();
 
 const API_KEY = process.env.GOLDRUSH_API_KEY;
-const STREAMING_URL = `wss://goldrush.covalenthq.com/graphql?apikey=${API_KEY}`;
+const STREAMING_URL = `wss://streaming.goldrushdata.com/graphql`;
 
 // In-memory signal store
 export const signals = [];
@@ -24,7 +24,7 @@ export function startWalletStream(walletAddresses, onSignal) {
     webSocketImpl: WebSocket,
     connectionParams: {
       headers: {
-        Authorization: `Bearer ${API_KEY}`,
+        GOLDRUSH_API_KEY: API_KEY,
       },
     },
     on: {

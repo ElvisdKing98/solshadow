@@ -8,79 +8,260 @@ interface Whale {
   totalSellUsd: number;
   tradesCount: number;
   score: number;
+  tier?: string;
+  token?: string;
+  balance?: string;
+  label?: string;
 }
 
-export default function WhaleCard({ whale, onWatch }: { whale: Whale; onWatch: (w: string) => void }) {
+export default function WhaleCard({
+  whale,
+  onWatch,
+  onView,
+  isWatched,
+}: {
+  whale: Whale;
+  onWatch: (w: string) => void;
+  onView: () => void;
+  isWatched?: boolean;
+}) {
   const short = (addr: string) => `${addr.slice(0, 6)}...${addr.slice(-4)}`;
-  const pnlColor = whale.realizedPnl >= 0 ? "var(--success)" : "var(--danger)";
-  const scoreColor = whale.score >= 70 ? "var(--success)" : whale.score >= 40 ? "var(--warning)" : "var(--danger)";
+  const scoreColor =
+    whale.score >= 70
+      ? "var(--success)"
+      : whale.score >= 40
+      ? "var(--warning)"
+      : "var(--danger)";
+
+  const balanceDisplay =
+    typeof whale.totalBuyUsd === "number" && whale.totalBuyUsd > 0
+      ? whale.totalBuyUsd >= 1_000_000_000
+        ? `$${(whale.totalBuyUsd / 1_000_000_000).toFixed(2)}B`
+        : whale.totalBuyUsd >= 1_000_000
+        ? `$${(whale.totalBuyUsd / 1_000_000).toFixed(2)}M`
+        : whale.totalBuyUsd >= 1_000
+        ? `$${(whale.totalBuyUsd / 1_000).toFixed(1)}K`
+        : `$${whale.totalBuyUsd.toFixed(0)}`
+      : "—";
 
   return (
-    <div className="card p-4 animate-fade-in cursor-pointer" style={{ borderLeft: `3px solid ${scoreColor}` }}>
+    <div
+      className="card animate-fade-in"
+      onClick={onView}
+      style={{
+        padding: "16px",
+        borderLeft: `3px solid ${scoreColor}`,
+        cursor: "pointer",
+        transition: "all 0.2s",
+      }}
+    >
       {/* Header */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "12px" }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          marginBottom: "14px",
+        }}
+      >
         <div>
-          <p className="mono" style={{ color: "var(--text-secondary)" }}>{short(whale.walletAddress)}</p>
-          <div style={{ display: "flex", alignItems: "center", gap: "6px", marginTop: "4px" }}>
-            <span style={{
-              background: `${scoreColor}20`,
-              color: scoreColor,
-              padding: "2px 8px",
-              borderRadius: "20px",
-              fontSize: "0.7rem",
-              fontWeight: 700,
-              fontFamily: "Space Mono"
-            }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              marginBottom: "2px",
+            }}
+          >
+            <span style={{ fontSize: "1rem" }}>
+              {whale.tier?.split(" ")[0] || "🐋"}
+            </span>
+            <p
+              className="mono"
+              style={{ color: "var(--text-secondary)", fontSize: "0.75rem" }}
+            >
+              {short(whale.walletAddress)}
+            </p>
+          </div>
+
+          {/* Label for curated Solana wallets */}
+          {whale.label && (
+            <p
+              style={{
+                fontSize: "0.65rem",
+                color: "var(--accent)",
+                fontFamily: "Space Mono",
+                marginBottom: "4px",
+                marginLeft: "26px",
+              }}
+            >
+              {whale.label}
+            </p>
+          )}
+
+          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+            <span
+              style={{
+                background: `${scoreColor}20`,
+                color: scoreColor,
+                padding: "2px 8px",
+                borderRadius: "20px",
+                fontSize: "0.65rem",
+                fontWeight: 700,
+                fontFamily: "Space Mono",
+              }}
+            >
               SCORE {whale.score}
             </span>
+            {whale.tier && (
+              <span
+                style={{
+                  background: "var(--bg)",
+                  color: "var(--text-secondary)",
+                  padding: "2px 8px",
+                  borderRadius: "20px",
+                  fontSize: "0.65rem",
+                  fontFamily: "Space Mono",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                {whale.tier.split(" ").slice(1).join(" ")}
+              </span>
+            )}
           </div>
         </div>
+
         <button
-          onClick={() => onWatch(whale.walletAddress)}
+          onClick={(e) => {
+            e.stopPropagation();
+            onWatch(whale.walletAddress);
+          }}
           style={{
-            background: "var(--accent-dim)",
+            background: isWatched ? "var(--accent)" : "var(--accent-dim)",
             border: "1px solid var(--accent)",
-            color: "var(--accent)",
+            color: isWatched ? "var(--bg)" : "var(--accent)",
             padding: "6px 12px",
             borderRadius: "6px",
-            fontSize: "0.75rem",
+            fontSize: "0.72rem",
             fontWeight: 700,
             cursor: "pointer",
             fontFamily: "Syne, sans-serif",
-            transition: "all 0.2s"
+            transition: "all 0.2s",
+            whiteSpace: "nowrap",
           }}
-          onMouseEnter={e => (e.currentTarget.style.background = "var(--accent)", e.currentTarget.style.color = "var(--bg)")}
-          onMouseLeave={e => (e.currentTarget.style.background = "var(--accent-dim)", e.currentTarget.style.color = "var(--accent)")}
         >
-          SHADOW
+          {isWatched ? "✓ SHADOWING" : "SHADOW"}
         </button>
       </div>
 
-      {/* Stats */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
-        <div style={{ background: "var(--bg)", padding: "8px", borderRadius: "8px" }}>
-          <p style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "2px" }}>REALIZED PnL</p>
-          <p style={{ fontSize: "0.9rem", fontWeight: 700, color: pnlColor, fontFamily: "Space Mono" }}>
-            {whale.realizedPnl >= 0 ? "+" : ""}${whale.realizedPnl?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+      {/* Balance highlight */}
+      <div
+        style={{
+          background: "var(--bg)",
+          borderRadius: "8px",
+          padding: "12px",
+          marginBottom: "12px",
+          textAlign: "center",
+        }}
+      >
+        <p
+          style={{
+            fontSize: "0.65rem",
+            color: "var(--text-muted)",
+            fontFamily: "Space Mono",
+            marginBottom: "4px",
+          }}
+        >
+          {whale.token || "TOKEN"} HOLDINGS
+        </p>
+        <p
+          style={{
+            fontSize: "1.3rem",
+            fontWeight: 800,
+            fontFamily: "Space Mono",
+            color: "var(--text-primary)",
+          }}
+        >
+          {balanceDisplay}
+        </p>
+      </div>
+
+      {/* Stats grid */}
+      <div
+        style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}
+      >
+        <div
+          style={{
+            background: "var(--bg)",
+            padding: "8px",
+            borderRadius: "8px",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "0.6rem",
+              color: "var(--text-muted)",
+              marginBottom: "2px",
+              fontFamily: "Space Mono",
+            }}
+          >
+            REALIZED PnL
+          </p>
+          <p
+            style={{
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              color:
+                whale.realizedPnl >= 0 ? "var(--success)" : "var(--danger)",
+              fontFamily: "Space Mono",
+            }}
+          >
+            {whale.realizedPnl > 0
+              ? `+$${whale.realizedPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+              : "—"}
           </p>
         </div>
-        <div style={{ background: "var(--bg)", padding: "8px", borderRadius: "8px" }}>
-          <p style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "2px" }}>TOTAL TRADES</p>
-          <p style={{ fontSize: "0.9rem", fontWeight: 700, fontFamily: "Space Mono" }}>{whale.tradesCount}</p>
-        </div>
-        <div style={{ background: "var(--bg)", padding: "8px", borderRadius: "8px" }}>
-          <p style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "2px" }}>TOTAL BOUGHT</p>
-          <p style={{ fontSize: "0.9rem", fontWeight: 700, fontFamily: "Space Mono" }}>
-            ${whale.totalBuyUsd?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+        <div
+          style={{
+            background: "var(--bg)",
+            padding: "8px",
+            borderRadius: "8px",
+          }}
+        >
+          <p
+            style={{
+              fontSize: "0.6rem",
+              color: "var(--text-muted)",
+              marginBottom: "2px",
+              fontFamily: "Space Mono",
+            }}
+          >
+            TOTAL TRADES
           </p>
-        </div>
-        <div style={{ background: "var(--bg)", padding: "8px", borderRadius: "8px" }}>
-          <p style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginBottom: "2px" }}>TOTAL SOLD</p>
-          <p style={{ fontSize: "0.9rem", fontWeight: 700, fontFamily: "Space Mono" }}>
-            ${whale.totalSellUsd?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+          <p
+            style={{
+              fontSize: "0.85rem",
+              fontWeight: 700,
+              fontFamily: "Space Mono",
+            }}
+          >
+            {whale.tradesCount || "—"}
           </p>
         </div>
       </div>
+
+      {/* View hint */}
+      <p
+        style={{
+          textAlign: "center",
+          fontSize: "0.65rem",
+          color: "var(--text-muted)",
+          marginTop: "10px",
+          fontFamily: "Space Mono",
+        }}
+      >
+        click to view full profile →
+      </p>
     </div>
   );
 }

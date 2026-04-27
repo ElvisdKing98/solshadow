@@ -3,100 +3,135 @@ dotenv.config();
 
 const API_KEY = process.env.GOLDRUSH_API_KEY;
 const BASE_URL = "https://api.covalenthq.com/v1";
+const GRAPHQL_URL = "https://streaming.goldrushdata.com/graphql";
 
-// Discover top trader wallets for a given token on Solana
-export async function getTopTraders(tokenAddress) {
-  const query = `
-    query {
-      topTraderWalletsForToken(
-        chainName: "solana-mainnet"
-        tokenAddress: "${tokenAddress}"
-      ) {
-        walletAddress
-        totalBuyUsd
-        totalSellUsd
-        realizedPnlUsd
-        unrealizedPnlUsd
-        totalTradesCount
-      }
-    }
-  `;
-
-  const response = await fetch("https://goldrush.covalenthq.com/graphql", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${API_KEY}`,
-    },
-    body: JSON.stringify({ query }),
-  });
-
-  const data = await response.json();
-  return data?.data?.topTraderWalletsForToken || [];
-}
-
-// Get wallet PnL breakdown by token
-export async function getWalletPnL(walletAddress) {
-  const query = `
-    query {
-      walletPnlByToken(
-        chainName: "solana-mainnet"
-        walletAddress: "${walletAddress}"
-      ) {
-        tokenAddress
-        tokenSymbol
-        realizedPnlUsd
-        unrealizedPnlUsd
-        currentBalanceUsd
-        totalBuyUsd
-        totalSellUsd
-      }
-    }
-  `;
-
-  const response = await fetch("https://goldrush.covalenthq.com/graphql", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${API_KEY}`,
-    },
-    body: JSON.stringify({ query }),
-  });
-
-  const data = await response.json();
-  return data?.data?.walletPnlByToken || [];
-}
-
-// Get token balances for a wallet
-export async function getWalletBalances(walletAddress) {
+// Get top token holders — works on both EVM and Solana
+export async function getTopHolders(tokenAddress, chain = "eth-mainnet") {
   const response = await fetch(
-    `${BASE_URL}/solana-mainnet/address/${walletAddress}/balances_v2/?key=${API_KEY}`
+    `${BASE_URL}/${chain}/tokens/${tokenAddress}/token_holders_v2/?key=${API_KEY}`
+  );
+  const data = await response.json();
+  if (data.error) throw new Error(data.error_message || "Failed to fetch holders");
+  return data?.data?.items || [];
+}
+
+// Get wallet transaction history — for scoring activity
+export async function getWalletTransactions(walletAddress, chain = "eth-mainnet") {
+  const response = await fetch(
+    `${BASE_URL}/${chain}/address/${walletAddress}/transactions_v3/?key=${API_KEY}`
   );
   const data = await response.json();
   return data?.data?.items || [];
 }
 
-// Score a whale wallet based on PnL data
+// Get wallet token balances
+export async function getWalletBalances(walletAddress, chain = "eth-mainnet") {
+  const response = await fetch(
+    `${BASE_URL}/${chain}/address/${walletAddress}/balances_v2/?key=${API_KEY}`
+  );
+  const data = await response.json();
+  return data?.data?.items || [];
+}
+
+// Try upnlForToken GraphQL — works on supported EVM chains
+export async function getTopTraders(tokenAddress, chainName = "ETH_MAINNET") {
+  const query = `
+    query {
+      upnlForToken(
+        chain_name: ${chainName}
+        token_address: "${tokenAddress}"
+      ) {
+        wallet_address
+        volume
+        transactions_count
+        balance_pretty
+        pnl_realized_usd
+        pnl_unrealized_usd
+        contract_metadata {
+          contract_name
+          contract_ticker_symbol
+        }
+      }
+    }
+  `;
+
+  const response = await fetch(GRAPHQL_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${API_KEY}`,
+    },
+    body: JSON.stringify({ query }),
+  });
+
+  const data = await response.json();
+  if (data.errors) throw new Error(data.errors[0]?.message);
+  return data?.data?.upnlForToken || [];
+}
+
+// Get wallet PnL via GraphQL
+export async function getWalletPnL(walletAddress, chainName = "ETH_MAINNET") {
+  const query = `
+    query {
+      upnlForWallet(
+        chain_name: ${chainName}
+        wallet_address: "${walletAddress}"
+      ) {
+        token_address
+        pnl_realized_usd
+        pnl_unrealized_usd
+        balance_pretty
+        volume
+        contract_metadata {
+          contract_name
+          contract_ticker_symbol
+        }
+      }
+    }
+  `;
+
+  const response = await fetch(GRAPHQL_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${API_KEY}`,
+    },
+    body: JSON.stringify({ query }),
+  });
+
+  const data = await response.json();
+  if (data.errors) return [];
+  return data?.data?.upnlForWallet || [];
+}
+
+// Score wallet from PnL data (GraphQL traders)
 export function scoreWallet(pnlData) {
   if (!pnlData || pnlData.length === 0) return 0;
-
-  const totalRealized = pnlData.reduce(
-    (sum, t) => sum + (t.realizedPnlUsd || 0), 0
-  );
-  const totalUnrealized = pnlData.reduce(
-    (sum, t) => sum + (t.unrealizedPnlUsd || 0), 0
-  );
-  const totalPnl = totalRealized + totalUnrealized;
-  const winningTokens = pnlData.filter((t) => t.realizedPnlUsd > 0).length;
+  const totalRealized = pnlData.reduce((sum, t) => sum + (t.pnl_realized_usd || 0), 0);
+  const totalPnl = totalRealized + pnlData.reduce((sum, t) => sum + (t.pnl_unrealized_usd || 0), 0);
+  const winningTokens = pnlData.filter((t) => t.pnl_realized_usd > 0).length;
   const winRate = pnlData.length > 0 ? winningTokens / pnlData.length : 0;
-
-  // Score out of 100
   let score = 0;
   if (totalPnl > 100000) score += 50;
   else if (totalPnl > 10000) score += 30;
   else if (totalPnl > 1000) score += 15;
-
   score += Math.round(winRate * 50);
-
   return Math.min(score, 100);
+}
+
+// Score wallet from holder balance — varied, meaningful scores
+export function scoreFromBalance(balanceHuman, rank, totalHolders) {
+  // Base score from rank (top holder = higher score)
+  const rankScore = Math.max(0, 60 - (rank / totalHolders) * 40);
+
+  // Balance tier score
+  let balanceScore = 0;
+  if (balanceHuman > 1_000_000_000) balanceScore = 40;      // $1B+
+  else if (balanceHuman > 100_000_000) balanceScore = 35;   // $100M+
+  else if (balanceHuman > 10_000_000) balanceScore = 28;    // $10M+
+  else if (balanceHuman > 1_000_000) balanceScore = 20;     // $1M+
+  else if (balanceHuman > 100_000) balanceScore = 12;       // $100K+
+  else balanceScore = 5;
+
+  return Math.min(Math.round(rankScore + balanceScore), 99);
 }
