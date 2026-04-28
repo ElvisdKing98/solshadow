@@ -469,6 +469,44 @@ export default function Home() {
 
             {walletProfile && !profileLoading && !walletProfile.error && (
               <>
+                {/* Stats row — PnL, Total Txs, Wallet Age */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", marginBottom: "20px" }}>
+                  <div style={{ background: "var(--bg)", padding: "12px", borderRadius: "8px", textAlign: "center" }}>
+                    <p style={{ fontSize: "0.6rem", color: "var(--text-muted)", fontFamily: "Space Mono", marginBottom: "4px" }}>
+                      REALIZED PnL
+                    </p>
+                    <p style={{
+                      fontSize: "1rem", fontWeight: 800, fontFamily: "Space Mono",
+                      color: walletProfile.realizedPnl >= 0 ? "var(--success)" : "var(--danger)",
+                    }}>
+                      {walletProfile.realizedPnl > 0
+                        ? `+$${walletProfile.realizedPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                        : walletProfile.realizedPnl < 0
+                        ? `-$${Math.abs(walletProfile.realizedPnl).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                        : "—"}
+                    </p>
+                  </div>
+                  <div style={{ background: "var(--bg)", padding: "12px", borderRadius: "8px", textAlign: "center" }}>
+                    <p style={{ fontSize: "0.6rem", color: "var(--text-muted)", fontFamily: "Space Mono", marginBottom: "4px" }}>
+                      TOTAL TXS
+                    </p>
+                    <p style={{ fontSize: "1rem", fontWeight: 800, fontFamily: "Space Mono" }}>
+                      {walletProfile.totalTxs?.toLocaleString() || "—"}
+                    </p>
+                  </div>
+                  <div style={{ background: "var(--bg)", padding: "12px", borderRadius: "8px", textAlign: "center" }}>
+                    <p style={{ fontSize: "0.6rem", color: "var(--text-muted)", fontFamily: "Space Mono", marginBottom: "4px" }}>
+                      FIRST TX
+                    </p>
+                    <p style={{ fontSize: "0.75rem", fontWeight: 700, fontFamily: "Space Mono" }}>
+                      {walletProfile.firstTx
+                        ? new Date(walletProfile.firstTx).getFullYear()
+                        : "—"}
+                    </p>
+                  </div>
+                </div>
+            
+                {/* Top holdings */}
                 {walletProfile.topHoldings?.length > 0 && (
                   <div style={{ marginBottom: "20px" }}>
                     <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "Space Mono", marginBottom: "10px" }}>
@@ -505,11 +543,12 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-
+            
+                {/* Recent transactions */}
                 {walletProfile.recentTxs?.length > 0 && (
                   <div>
                     <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "Space Mono", marginBottom: "10px" }}>
-                      RECENT TRANSACTIONS ({walletProfile.totalTxs} total)
+                      RECENT TRANSACTIONS ({walletProfile.totalTxs?.toLocaleString()} total)
                     </p>
                     <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                       {walletProfile.recentTxs.map((tx: any, i: number) => (
@@ -526,9 +565,16 @@ export default function Home() {
                               {tx.hash?.slice(0, 10)}...
                             </span>
                           </div>
-                          <span style={{ fontFamily: "Space Mono", fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                            {new Date(tx.date).toLocaleDateString()}
-                          </span>
+                          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                            {tx.valueUsd > 0 && (
+                              <span style={{ fontFamily: "Space Mono", fontSize: "0.7rem", color: "var(--accent)" }}>
+                                ${tx.valueUsd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                              </span>
+                            )}
+                            <span style={{ fontFamily: "Space Mono", fontSize: "0.7rem", color: "var(--text-secondary)" }}>
+                              {new Date(tx.date).toLocaleDateString()}
+                            </span>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -536,7 +582,6 @@ export default function Home() {
                 )}
               </>
             )}
-
             {/* Action buttons */}
             <div style={{ display: "flex", gap: "10px", marginTop: "24px" }}>
               <button

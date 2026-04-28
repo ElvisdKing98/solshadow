@@ -5,22 +5,13 @@ const API_KEY = process.env.GOLDRUSH_API_KEY;
 const BASE_URL = "https://api.covalenthq.com/v1";
 const GRAPHQL_URL = "https://streaming.goldrushdata.com/graphql";
 
-// Get top token holders — works on both EVM and Solana
+// Get top token holders
 export async function getTopHolders(tokenAddress, chain = "eth-mainnet") {
   const response = await fetch(
     `${BASE_URL}/${chain}/tokens/${tokenAddress}/token_holders_v2/?key=${API_KEY}`
   );
   const data = await response.json();
   if (data.error) throw new Error(data.error_message || "Failed to fetch holders");
-  return data?.data?.items || [];
-}
-
-// Get wallet transaction history — for scoring activity
-export async function getWalletTransactions(walletAddress, chain = "eth-mainnet") {
-  const response = await fetch(
-    `${BASE_URL}/${chain}/address/${walletAddress}/transactions_v3/?key=${API_KEY}`
-  );
-  const data = await response.json();
   return data?.data?.items || [];
 }
 
@@ -33,7 +24,47 @@ export async function getWalletBalances(walletAddress, chain = "eth-mainnet") {
   return data?.data?.items || [];
 }
 
-// Try upnlForToken GraphQL — works on supported EVM chains
+// Get transaction summary — total count, first/last tx date
+export async function getTransactionSummary(walletAddress, chain = "eth-mainnet") {
+  const response = await fetch(
+    `${BASE_URL}/${chain}/address/${walletAddress}/transactions_summary/?key=${API_KEY}`
+  );
+  const data = await response.json();
+  if (data.error) return null;
+  return data?.data?.items?.[0] || null;
+}
+
+// Get recent transactions for PnL estimation
+export async function getRecentTransactions(walletAddress, chain = "eth-mainnet") {
+  const response = await fetch(
+    `${BASE_URL}/${chain}/address/${walletAddress}/transactions_v3/?key=${API_KEY}&no-logs=true`
+  );
+  const data = await response.json();
+  if (data.error) return [];
+  return data?.data?.items || [];
+}
+
+// Estimate realized PnL from recent transactions
+export function estimatePnlFromTxs(txs, walletAddress) {
+  if (!txs || txs.length === 0) return 0;
+
+  let totalIn = 0;
+  let totalOut = 0;
+
+  for (const tx of txs) {
+    if (!tx.successful) continue;
+    const valueUsd = tx.value_quote || 0;
+    if (tx.to_address?.toLowerCase() === walletAddress?.toLowerCase()) {
+      totalIn += valueUsd;
+    } else if (tx.from_address?.toLowerCase() === walletAddress?.toLowerCase()) {
+      totalOut += valueUsd;
+    }
+  }
+
+  return Math.round(totalIn - totalOut);
+}
+
+// Try upnlForToken GraphQL
 export async function getTopTraders(tokenAddress, chainName = "ETH_MAINNET") {
   const query = `
     query {
@@ -104,7 +135,7 @@ export async function getWalletPnL(walletAddress, chainName = "ETH_MAINNET") {
   return data?.data?.upnlForWallet || [];
 }
 
-// Score wallet from PnL data (GraphQL traders)
+// Score wallet from PnL data
 export function scoreWallet(pnlData) {
   if (!pnlData || pnlData.length === 0) return 0;
   const totalRealized = pnlData.reduce((sum, t) => sum + (t.pnl_realized_usd || 0), 0);
@@ -121,17 +152,13 @@ export function scoreWallet(pnlData) {
 
 // Score wallet from holder balance — varied, meaningful scores
 export function scoreFromBalance(balanceHuman, rank, totalHolders) {
-  // Base score from rank (top holder = higher score)
   const rankScore = Math.max(0, 60 - (rank / totalHolders) * 40);
-
-  // Balance tier score
   let balanceScore = 0;
-  if (balanceHuman > 1_000_000_000) balanceScore = 40;      // $1B+
-  else if (balanceHuman > 100_000_000) balanceScore = 35;   // $100M+
-  else if (balanceHuman > 10_000_000) balanceScore = 28;    // $10M+
-  else if (balanceHuman > 1_000_000) balanceScore = 20;     // $1M+
-  else if (balanceHuman > 100_000) balanceScore = 12;       // $100K+
+  if (balanceHuman > 1_000_000_000) balanceScore = 40;
+  else if (balanceHuman > 100_000_000) balanceScore = 35;
+  else if (balanceHuman > 10_000_000) balanceScore = 28;
+  else if (balanceHuman > 1_000_000) balanceScore = 20;
+  else if (balanceHuman > 100_000) balanceScore = 12;
   else balanceScore = 5;
-
   return Math.min(Math.round(rankScore + balanceScore), 99);
 }
