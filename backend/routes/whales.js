@@ -9,6 +9,7 @@ import {
   scoreWallet,
   scoreFromBalance,
   estimatePnlFromTxs,
+  estimatePnlFrom24hChange,
 } from "../services/goldrush.js";
 
 const router = express.Router();
@@ -35,9 +36,7 @@ function setCache(key, data) {
 }
 
 // Tokens that don't support token_holders_v2 — use fallback list
-const UNSUPPORTED_TOKENS = [
-  
-];
+const UNSUPPORTED_TOKENS = [];
 
 // GET /api/whales/discover?token=<tokenAddress>&chain=<chainName>&network=<network>
 router.get("/discover", async (req, res) => {
@@ -85,40 +84,48 @@ router.get("/discover", async (req, res) => {
         topHolders.map((h) => getTransactionSummary(h.address, network))
       );
 
-      const scored = topHolders
-        .filter((h) => h.address)
-        .map((h, index) => {
-          const decimals = h.contract_decimals ?? 18;
-          const balanceHuman = parseFloat(h.balance) / Math.pow(10, decimals);
-          const score = scoreFromBalance(balanceHuman, index, total);
-          const txSummary = txSummaries[index]?.status === "fulfilled"
-            ? txSummaries[index].value
-            : null;
+      // In the holders map function, fetch balance change for PnL
+      const scored = await Promise.all(
+        topHolders
+          .filter((h) => h.address)
+          .map(async (h, index) => {
+            const decimals = h.contract_decimals ?? 18;
+            const balanceHuman = parseFloat(h.balance) / Math.pow(10, decimals);
+            const score = scoreFromBalance(balanceHuman, index, total);
+            const txSummary = txSummaries[index]?.status === "fulfilled"
+              ? txSummaries[index].value
+              : null;
 
-          let tier = "🐟 Fish";
-          if (balanceHuman > 1_000_000_000) tier = "🐳 Mega Whale";
-          else if (balanceHuman > 100_000_000) tier = "🐋 Whale";
-          else if (balanceHuman > 10_000_000) tier = "🦈 Shark";
-          else if (balanceHuman > 1_000_000) tier = "🐬 Dolphin";
+            // Fetch balances for 24h PnL estimate
+            let realizedPnl = 0;
+            try {
+              const balances = await getWalletBalances(h.address, network);
+              realizedPnl = estimatePnlFrom24hChange(balances);
+            } catch (e) {}
 
-          return {
-            walletAddress: h.address,
-            totalBuyUsd: balanceHuman,
-            totalSellUsd: 0,
-            realizedPnl: 0,
-            unrealizedPnl: balanceHuman,
-            tradesCount: txSummary?.total_count || 0,
-            balance: balanceHuman.toLocaleString(undefined, { maximumFractionDigits: 0 }),
-            token: h.contract_ticker_symbol,
-            logoUrl: h.logo_url,
-            score,
-            tier,
-            source: "holders",
-            network,
-          };
-        })
-        .sort((a, b) => b.totalBuyUsd - a.totalBuyUsd);
+            let tier = "🐟 Fish";
+            if (balanceHuman > 1_000_000_000) tier = "🐳 Mega Whale";
+            else if (balanceHuman > 100_000_000) tier = "🐋 Whale";
+            else if (balanceHuman > 10_000_000) tier = "🦈 Shark";
+            else if (balanceHuman > 1_000_000) tier = "🐬 Dolphin";
 
+            return {
+              walletAddress: h.address,
+              totalBuyUsd: balanceHuman,
+              totalSellUsd: 0,
+              realizedPnl,
+              unrealizedPnl: balanceHuman,
+              tradesCount: txSummary?.total_count || 0,
+              balance: balanceHuman.toLocaleString(undefined, { maximumFractionDigits: 0 }),
+              token: h.contract_ticker_symbol,
+              logoUrl: h.logo_url,
+              score,
+              tier,
+              source: "holders",
+              network,
+            };
+          })
+      );
       const result = { success: true, whales: scored, source: "holders" };
       setCache(cacheKey, result);
       return res.json(result);

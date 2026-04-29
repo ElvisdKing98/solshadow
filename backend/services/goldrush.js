@@ -64,6 +64,21 @@ export function estimatePnlFromTxs(txs, walletAddress) {
   return Math.round(totalIn - totalOut);
 }
 
+// Estimate PnL from 24h balance change — more reliable than tx values
+export function estimatePnlFrom24hChange(balances) {
+  if (!balances || balances.length === 0) return 0;
+
+  let totalChange = 0;
+  for (const token of balances) {
+    const current = token.quote || 0;
+    const prev = token.quote_24h || 0;
+    if (prev > 0 && current > 0) {
+      totalChange += current - prev;
+    }
+  }
+  return Math.round(totalChange);
+}
+
 // Try upnlForToken GraphQL
 export async function getTopTraders(tokenAddress, chainName = "ETH_MAINNET") {
   const query = `
