@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import WhaleCard from "@/components/WhaleCard";
 import SignalFeed from "@/components/SignalFeed";
+import RiskScore from "@/components/RiskScore";
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:4000";
 
@@ -114,10 +115,18 @@ export default function Home() {
     setWalletProfile(null);
     try {
       const chainParam = whale.network?.includes("base") ? "BASE_MAINNET" : "ETH_MAINNET";
-      const res = await axios.get(
-        `${BACKEND}/api/whales/profile?wallet=${whale.walletAddress}&chain=${chainParam}&network=${whale.network || currentNetwork}`
-      );
-      setWalletProfile(res.data);
+      const network = whale.network || currentNetwork;
+
+      // Fetch profile + risk in parallel
+      const [profileRes, riskRes] = await Promise.allSettled([
+        axios.get(`${BACKEND}/api/whales/profile?wallet=${whale.walletAddress}&chain=${chainParam}&network=${network}`),
+        axios.get(`${BACKEND}/api/whales/risk?wallet=${whale.walletAddress}&network=${network}`),
+      ]);
+
+      const profile = profileRes.status === "fulfilled" ? profileRes.value.data : {};
+      const risk = riskRes.status === "fulfilled" ? riskRes.value.data : null;
+
+      setWalletProfile({ ...profile, risk });
     } catch {
       setWalletProfile({ error: "Could not load profile" });
     } finally {
@@ -400,7 +409,6 @@ export default function Home() {
                   <h2 style={{ fontSize: "1.1rem", fontWeight: 800, color: "var(--accent)" }}>
                     {selectedWallet.tier || "Whale"}
                   </h2>
-                  {/* Chain badge */}
                   <span style={{
                     background: selectedWallet.network?.includes("base") ? "#0052ff20" : "#627eea20",
                     color: selectedWallet.network?.includes("base") ? "#0052ff" : "#627eea",
@@ -428,7 +436,7 @@ export default function Home() {
               </button>
             </div>
 
-            {/* Score bar */}
+            {/* Whale Score bar */}
             <div style={{ background: "var(--bg)", borderRadius: "8px", padding: "16px", marginBottom: "20px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "8px" }}>
                 <span style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "Space Mono" }}>WHALE SCORE</span>
@@ -458,7 +466,7 @@ export default function Home() {
               </p>
             </div>
 
-            {/* Profile data */}
+            {/* Profile loading skeleton */}
             {profileLoading && (
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                 {[...Array(3)].map((_, i) => (
@@ -467,9 +475,15 @@ export default function Home() {
               </div>
             )}
 
+            {/* Profile data — only ONE risk section via RiskScore component */}
             {walletProfile && !profileLoading && !walletProfile.error && (
               <>
-                {/* Stats row — PnL, Total Txs, Wallet Age */}
+                {/* ✅ SINGLE Risk Score component — full breakdown */}
+                {walletProfile.risk && walletProfile.risk.success && (
+                  <RiskScore risk={walletProfile.risk} />
+                )}
+
+                {/* Stats row */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px", marginBottom: "20px" }}>
                   <div style={{ background: "var(--bg)", padding: "12px", borderRadius: "8px", textAlign: "center" }}>
                     <p style={{ fontSize: "0.6rem", color: "var(--text-muted)", fontFamily: "Space Mono", marginBottom: "4px" }}>
@@ -477,7 +491,7 @@ export default function Home() {
                     </p>
                     <p style={{
                       fontSize: "1rem", fontWeight: 800, fontFamily: "Space Mono",
-                      color: walletProfile.realizedPnl >= 0 ? "var(--success)" : "var(--danger)",
+                      color: (walletProfile.realizedPnl || 0) >= 0 ? "var(--success)" : "var(--danger)",
                     }}>
                       {walletProfile.realizedPnl > 0
                         ? `+$${walletProfile.realizedPnl.toLocaleString(undefined, { maximumFractionDigits: 0 })}`
@@ -496,16 +510,16 @@ export default function Home() {
                   </div>
                   <div style={{ background: "var(--bg)", padding: "12px", borderRadius: "8px", textAlign: "center" }}>
                     <p style={{ fontSize: "0.6rem", color: "var(--text-muted)", fontFamily: "Space Mono", marginBottom: "4px" }}>
-                      FIRST TX
+                      ON-CHAIN SINCE
                     </p>
-                    <p style={{ fontSize: "0.75rem", fontWeight: 700, fontFamily: "Space Mono" }}>
+                    <p style={{ fontSize: "0.85rem", fontWeight: 700, fontFamily: "Space Mono" }}>
                       {walletProfile.firstTx
                         ? new Date(walletProfile.firstTx).getFullYear()
                         : "—"}
                     </p>
                   </div>
                 </div>
-            
+
                 {/* Top holdings */}
                 {walletProfile.topHoldings?.length > 0 && (
                   <div style={{ marginBottom: "20px" }}>
@@ -543,7 +557,7 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-            
+
                 {/* Recent transactions */}
                 {walletProfile.recentTxs?.length > 0 && (
                   <div>
@@ -582,6 +596,7 @@ export default function Home() {
                 )}
               </>
             )}
+
             {/* Action buttons */}
             <div style={{ display: "flex", gap: "10px", marginTop: "24px" }}>
               <button

@@ -22,16 +22,17 @@ export function startWalletStream(walletAddresses, onSignal) {
   const client = createClient({
     url: STREAMING_URL,
     webSocketImpl: WebSocket,
-    connectionParams: {
-      headers: {
-        GOLDRUSH_API_KEY: API_KEY,
-      },
-    },
+    connectionParams: () => ({
+      Authorization: `Bearer ${API_KEY}`,
+      "x-api-key": API_KEY,
+      token: API_KEY,
+      apiKey: API_KEY,
+    }),
     on: {
       connecting: () => console.log("🔌 Connecting to GoldRush stream..."),
       opened: () => console.log("✅ Connected to GoldRush stream!"),
       closed: () => console.log("❌ Stream closed"),
-      error: (err) => console.error("Stream error:", err),
+      error: (err) => console.error("Stream error:", err?.message || err),
     },
   });
 
@@ -86,24 +87,20 @@ export function startWalletStream(walletAddresses, onSignal) {
       next: (data) => {
         const tx = data?.data?.walletTxs;
         if (!tx) return;
-
-        // Only care about swaps and large transfers
-        if (tx.decoded_type !== "SWAP" && tx.decoded_type !== "TRANSFER") return;
-
         const signal = buildSignal(tx);
         if (!signal) return;
-
-        // Store signal in memory
         signals.unshift(signal);
-        if (signals.length > 100) signals.pop(); // Keep last 100
-
+        if (signals.length > 100) signals.pop();
         console.log(`🐋 Signal detected: ${signal.type} — ${signal.summary}`);
         if (onSignal) onSignal(signal);
       },
-      error: (err) => console.error("Subscription error:", err),
+      error: (err) => console.error("Subscription error:", JSON.stringify(err, null, 2)),
       complete: () => console.log("Subscription complete"),
     }
   );
+
+  // Start demo signal generator for hackathon demo purposes
+  startDemoSignals(walletAddresses, onSignal);
 
   return client;
 }
@@ -114,9 +111,9 @@ function buildSignal(tx) {
     id: tx.tx_hash,
     wallet: tx.from_address,
     chain: tx.chain_name,
-    timestamp: tx.block_signed_at,
+    timestamp: tx.block_signed_at || new Date().toISOString(),
     txHash: tx.tx_hash,
-    type: tx.decoded_type,
+    type: tx.decoded_type || "SWAP",
   };
 
   if (tx.decoded_type === "SWAP" && tx.decoded_details) {
@@ -134,7 +131,7 @@ function buildSignal(tx) {
   if (tx.decoded_type === "TRANSFER" && tx.decoded_details) {
     const d = tx.decoded_details;
     const usd = d.quote_usd || 0;
-    if (usd < 10000) return null; // Only signal large transfers $10k+
+    if (usd < 10000) return null;
     return {
       ...base,
       summary: `Transferred $${usd.toLocaleString()} of ${d.contract_metadata?.contract_ticker_symbol}`,
@@ -144,4 +141,61 @@ function buildSignal(tx) {
   }
 
   return null;
+}
+
+// Demo signal generator — fires realistic signals for hackathon demo
+const DEMO_TOKENS = [
+  { in: "USDC", out: "WETH", min: 50000, max: 2000000 },
+  { in: "WETH", out: "USDC", min: 100000, max: 5000000 },
+  { in: "USDC", out: "Brett", min: 25000, max: 500000 },
+  { in: "AERO", out: "USDC", min: 10000, max: 300000 },
+  { in: "USDC", out: "PEPE", min: 50000, max: 1000000 },
+  { in: "WETH", out: "AERO", min: 200000, max: 3000000 },
+];
+
+let demoInterval = null;
+
+function startDemoSignals(walletAddresses, onSignal) {
+  // Clear existing interval if any
+  if (demoInterval) clearInterval(demoInterval);
+
+  // Fire first signal after 10 seconds
+  setTimeout(() => {
+    fireDemoSignal(walletAddresses, onSignal);
+  }, 10000);
+
+  // Then fire every 30-60 seconds
+  demoInterval = setInterval(() => {
+    fireDemoSignal(walletAddresses, onSignal);
+  }, 35000);
+}
+
+function fireDemoSignal(walletAddresses, onSignal) {
+  if (!walletAddresses || walletAddresses.length === 0) return;
+
+  const wallet = walletAddresses[Math.floor(Math.random() * walletAddresses.length)];
+  const token = DEMO_TOKENS[Math.floor(Math.random() * DEMO_TOKENS.length)];
+  const amount = Math.floor(Math.random() * (token.max - token.min) + token.min);
+  const chains = ["BASE_MAINNET", "ETH_MAINNET"];
+  const chain = chains[Math.floor(Math.random() * chains.length)];
+
+  const signal = {
+    id: `demo_${Date.now()}_${Math.random().toString(36).slice(2)}`,
+    wallet,
+    chain,
+    timestamp: new Date().toISOString(),
+    txHash: `0x${Math.random().toString(16).slice(2)}${Math.random().toString(16).slice(2)}`,
+    type: "SWAP",
+    summary: `Swapped $${amount.toLocaleString()} ${token.in} → ${token.out}`,
+    tokenIn: token.in,
+    tokenOut: token.out,
+    amountIn: amount,
+    amountOut: amount * (0.98 + Math.random() * 0.04),
+    isDemo: true,
+  };
+
+  signals.unshift(signal);
+  if (signals.length > 100) signals.pop();
+  console.log(`🎯 Demo signal: ${signal.summary} from ${wallet.slice(0, 8)}...`);
+  if (onSignal) onSignal(signal);
 }

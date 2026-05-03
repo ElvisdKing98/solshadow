@@ -115,6 +115,16 @@ export async function getTopTraders(tokenAddress, chainName = "ETH_MAINNET") {
   return data?.data?.upnlForToken || [];
 }
 
+// Get token approvals + risk assessment for a wallet
+export async function getWalletApprovals(walletAddress, chain = "eth-mainnet") {
+  const response = await fetch(
+    `${BASE_URL}/${chain}/approvals/${walletAddress}/?key=${API_KEY}`
+  );
+  const data = await response.json();
+  if (data.error) return [];
+  return data?.data?.items || [];
+}
+
 // Get wallet PnL via GraphQL
 export async function getWalletPnL(walletAddress, chainName = "ETH_MAINNET") {
   const query = `

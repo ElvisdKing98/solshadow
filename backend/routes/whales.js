@@ -6,6 +6,7 @@ import {
   getWalletBalances,
   getRecentTransactions,
   getTransactionSummary,
+  getWalletApprovals,
   scoreWallet,
   scoreFromBalance,
   estimatePnlFromTxs,
@@ -17,9 +18,9 @@ const router = express.Router();
 const API_KEY = process.env.GOLDRUSH_API_KEY;
 const BASE_URL = "https://api.covalenthq.com/v1";
 
-// Simple in-memory cache — 5 minute TTL
+// Cache — 15 minute TTL
 const cache = new Map();
-const CACHE_TTL = 5 * 60 * 1000;
+const CACHE_TTL = 15 * 60 * 1000;
 
 function getCached(key) {
   const entry = cache.get(key);
@@ -35,20 +36,62 @@ function setCache(key, data) {
   cache.set(key, { data, timestamp: Date.now() });
 }
 
-// Tokens that don't support token_holders_v2 — use fallback list
-const UNSUPPORTED_TOKENS = [];
+// Background enrichment — updates cache with tx counts + PnL after response sent
+async function enrichWhalesInBackground(whales, network, cacheKey) {
+  try {
+    console.log(`🔄 Background enrichment starting for ${whales.length} whales...`);
+    const enriched = await Promise.allSettled(
+      whales.map(async (whale) => {
+        try {
+          const [txSummary, balances] = await Promise.allSettled([
+            getTransactionSummary(whale.walletAddress, network),
+            getWalletBalances(whale.walletAddress, network),
+          ]);
+          const summary = txSummary.status === "fulfilled" ? txSummary.value : null;
+          const bals = balances.status === "fulfilled" ? balances.value : [];
+          const pnl = estimatePnlFrom24hChange(bals);
+          return {
+            ...whale,
+            tradesCount: summary?.total_count || 0,
+            realizedPnl: pnl,
+          };
+        } catch {
+          return whale;
+        }
+      })
+    );
 
-// GET /api/whales/discover?token=<tokenAddress>&chain=<chainName>&network=<network>
+    // Update cache with enriched data
+    const cached = cache.get(cacheKey);
+    if (cached) {
+      const updatedWhales = [...cached.data.whales];
+      enriched.forEach((result, index) => {
+        if (result.status === "fulfilled") {
+          updatedWhales[index] = result.value;
+        }
+      });
+      cache.set(cacheKey, {
+        data: { ...cached.data, whales: updatedWhales },
+        timestamp: cached.timestamp,
+      });
+      console.log(`✅ Background enrichment complete for ${cacheKey}`);
+    }
+  } catch (err) {
+    console.error("Background enrichment error:", err.message);
+  }
+}
+
+// GET /api/whales/discover
 router.get("/discover", async (req, res) => {
   try {
     const { token, chain = "ETH_MAINNET", network = "eth-mainnet" } = req.query;
     if (!token) return res.status(400).json({ error: "Token address required" });
 
-    // Check cache first
+    // Check cache first — return instantly if cached
     const cacheKey = `discover:${token}:${network}`;
     const cached = getCached(cacheKey);
     if (cached) {
-      console.log("Cache hit:", cacheKey);
+      console.log("⚡ Cache hit:", cacheKey);
       return res.json({ ...cached, cached: true });
     }
 
@@ -62,73 +105,61 @@ router.get("/discover", async (req, res) => {
 
     // Fallback: top token holders
     if (!traders || traders.length === 0) {
-      // Check if token is unsupported for holders endpoint
-      const isUnsupported = UNSUPPORTED_TOKENS.includes(token.toLowerCase());
-      if (isUnsupported) {
-        return res.status(400).json({
-          error: "This token doesn't support holder lookup. Try USDC, PEPE, LINK, Brett or AERO instead.",
-        });
-      }
-
       console.log(`Fetching top holders on ${network}...`);
       const holders = await getTopHolders(token, network);
-      const total = holders.length;
 
       if (!holders || holders.length === 0) {
         return res.status(400).json({ error: "No holders found for this token." });
       }
 
-      // Fetch transaction summary for top 10 holders to get trade counts + PnL
-      const topHolders = holders.slice(0, 20);
-      const txSummaries = await Promise.allSettled(
-        topHolders.map((h) => getTransactionSummary(h.address, network))
-      );
+      const total = holders.length;
+      // Only take top 10 for speed
+      const topHolders = holders.slice(0, 10).filter((h) => h.address);
 
-      // In the holders map function, fetch balance change for PnL
-      const scored = await Promise.all(
-        topHolders
-          .filter((h) => h.address)
-          .map(async (h, index) => {
-            const decimals = h.contract_decimals ?? 18;
-            const balanceHuman = parseFloat(h.balance) / Math.pow(10, decimals);
-            const score = scoreFromBalance(balanceHuman, index, total);
-            const txSummary = txSummaries[index]?.status === "fulfilled"
-              ? txSummaries[index].value
-              : null;
+      // Build basic scored list IMMEDIATELY — no extra API calls
+      const scored = topHolders.map((h, index) => {
+        const decimals = h.contract_decimals ?? 18;
+        const balanceHuman = parseFloat(h.balance) / Math.pow(10, decimals);
+        const safeBalance = balanceHuman > 1_000_000_000_000 ? 0 : balanceHuman;
+        const score = scoreFromBalance(safeBalance, index, total);
 
-            // Fetch balances for 24h PnL estimate
-            let realizedPnl = 0;
-            try {
-              const balances = await getWalletBalances(h.address, network);
-              realizedPnl = estimatePnlFrom24hChange(balances);
-            } catch (e) {}
+        let tier = "🐟 Fish";
+        if (balanceHuman > 1_000_000_000) tier = "🐳 Mega Whale";
+        else if (balanceHuman > 100_000_000) tier = "🐋 Whale";
+        else if (balanceHuman > 10_000_000) tier = "🦈 Shark";
+        else if (balanceHuman > 1_000_000) tier = "🐬 Dolphin";
 
-            let tier = "🐟 Fish";
-            if (balanceHuman > 1_000_000_000) tier = "🐳 Mega Whale";
-            else if (balanceHuman > 100_000_000) tier = "🐋 Whale";
-            else if (balanceHuman > 10_000_000) tier = "🦈 Shark";
-            else if (balanceHuman > 1_000_000) tier = "🐬 Dolphin";
+        return {
+          walletAddress: h.address,
+          totalBuyUsd: safeBalance,        // was balanceHuman
+          totalSellUsd: 0,
+          realizedPnl: 0,
+          unrealizedPnl: safeBalance,      // was balanceHuman
+          tradesCount: 0,
+          balance: safeBalance.toLocaleString(undefined, { maximumFractionDigits: 0 }),
+          token: h.contract_ticker_symbol,
+          logoUrl: h.logo_url,
+          score: scoreFromBalance(safeBalance, index, total),  // was balanceHuman
+          tier: (() => {
+            if (safeBalance > 1_000_000_000) return "🐳 Mega Whale";
+            if (safeBalance > 100_000_000) return "🐋 Whale";
+            if (safeBalance > 10_000_000) return "🦈 Shark";
+            if (safeBalance > 1_000_000) return "🐬 Dolphin";
+            return "🐟 Fish";
+          })(),
+          source: "holders",
+          network,
+        };
+      }).sort((a, b) => b.totalBuyUsd - a.totalBuyUsd);
 
-            return {
-              walletAddress: h.address,
-              totalBuyUsd: balanceHuman,
-              totalSellUsd: 0,
-              realizedPnl,
-              unrealizedPnl: balanceHuman,
-              tradesCount: txSummary?.total_count || 0,
-              balance: balanceHuman.toLocaleString(undefined, { maximumFractionDigits: 0 }),
-              token: h.contract_ticker_symbol,
-              logoUrl: h.logo_url,
-              score,
-              tier,
-              source: "holders",
-              network,
-            };
-          })
-      );
+      // Cache and respond immediately
       const result = { success: true, whales: scored, source: "holders" };
       setCache(cacheKey, result);
-      return res.json(result);
+      res.json(result);
+
+      // Enrich top 5 in background after response sent
+      enrichWhalesInBackground(scored.slice(0, 5), network, cacheKey);
+      return;
     }
 
     // Use GraphQL traders data
@@ -148,7 +179,7 @@ router.get("/discover", async (req, res) => {
         network,
       }))
       .sort((a, b) => b.realizedPnl - a.realizedPnl)
-      .slice(0, 20);
+      .slice(0, 10);
 
     const result = { success: true, whales: scored, source: "traders" };
     setCache(cacheKey, result);
@@ -159,18 +190,17 @@ router.get("/discover", async (req, res) => {
   }
 });
 
-// GET /api/whales/profile?wallet=<walletAddress>&chain=<chainName>&network=<network>
+// GET /api/whales/profile
 router.get("/profile", async (req, res) => {
   try {
     const { wallet, chain = "ETH_MAINNET", network = "eth-mainnet" } = req.query;
     if (!wallet) return res.status(400).json({ error: "Wallet address required" });
 
-    // Check cache
     const cacheKey = `profile:${wallet}:${network}`;
     const cached = getCached(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
-    // Fetch balances, tx summary, and recent txs in parallel
+    // Fetch balances + tx summary + recent txs in parallel
     const [balances, txSummary, recentTxs] = await Promise.all([
       getWalletBalances(wallet, network),
       getTransactionSummary(wallet, network),
@@ -183,14 +213,11 @@ router.get("/profile", async (req, res) => {
       pnlData = await getWalletPnL(wallet, chain);
     } catch (e) {}
 
-    // Estimate PnL from transactions if GraphQL returns nothing
     const estimatedPnl = estimatePnlFromTxs(recentTxs, wallet);
     const graphqlPnl = pnlData.reduce((sum, t) => sum + (t.pnl_realized_usd || 0), 0);
     const realizedPnl = graphqlPnl !== 0 ? graphqlPnl : estimatedPnl;
-
     const score = pnlData.length > 0 ? scoreWallet(pnlData) : 50;
 
-    // Top holdings by USD value
     const topHoldings = balances
       .filter((b) => b.quote > 0)
       .sort((a, b) => b.quote - a.quote)
@@ -200,12 +227,12 @@ router.get("/profile", async (req, res) => {
         name: b.contract_name,
         usdValue: b.quote,
         logoUrl: b.logo_url,
-        percentChange: b.quote_24h && b.quote_24h > 0
-          ? (((b.quote - b.quote_24h) / b.quote_24h) * 100).toFixed(2)
-          : null,
+        percentChange:
+          b.quote_24h && b.quote_24h > 0
+            ? (((b.quote - b.quote_24h) / b.quote_24h) * 100).toFixed(2)
+            : null,
       }));
 
-    // Recent transactions
     const formattedTxs = recentTxs.slice(0, 10).map((tx) => ({
       hash: tx.tx_hash,
       date: tx.block_signed_at,
@@ -243,13 +270,11 @@ router.post("/watch", async (req, res) => {
     if (!wallets || wallets.length === 0) {
       return res.status(400).json({ error: "Wallet addresses required" });
     }
-
     const { startWalletStream, addWallets } = await import("../services/streaming.js");
     addWallets(wallets);
     startWalletStream(wallets, (signal) => {
       console.log("New signal:", signal.summary);
     });
-
     res.json({ success: true, message: `Watching ${wallets.length} wallets`, wallets });
   } catch (err) {
     console.error(err);
@@ -264,6 +289,117 @@ router.get("/signals", async (req, res) => {
     res.json({ success: true, signals });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch signals" });
+  }
+});
+
+// GET /api/whales/risk
+router.get("/risk", async (req, res) => {
+  try {
+    const { wallet, network = "eth-mainnet" } = req.query;
+    if (!wallet) return res.status(400).json({ error: "Wallet required" });
+
+    const cacheKey = `risk:${wallet}:${network}`;
+    const cached = getCached(cacheKey);
+    if (cached) return res.json({ ...cached, cached: true });
+
+    const approvals = await getWalletApprovals(wallet, network);
+
+    let highRiskCount = 0;
+    let mediumRiskCount = 0;
+    let totalValueAtRisk = 0;
+
+    for (const approval of approvals) {
+      const spenders = approval.spenders || [];
+      for (const spender of spenders) {
+        const risk = spender.risk_factor || "";
+        if (risk.includes("HIGH")) highRiskCount++;
+        else if (risk.includes("CONSIDER")) mediumRiskCount++;
+        totalValueAtRisk += spender.value_at_risk_quote || 0;
+      }
+    }
+
+    const riskScore = Math.min(
+      Math.round(
+        highRiskCount * 20 +
+          mediumRiskCount * 8 +
+          (totalValueAtRisk > 100000 ? 10 : 0)
+      ),
+      100
+    );
+    const trustScore = Math.max(100 - riskScore, 0);
+
+    const result = {
+      success: true,
+      wallet,
+      trustScore,
+      riskScore,
+      highRiskApprovals: highRiskCount,
+      mediumRiskApprovals: mediumRiskCount,
+      totalValueAtRisk: Math.round(totalValueAtRisk),
+      totalApprovals: approvals.length,
+      approvals: approvals.slice(0, 5).map((a) => ({
+        token: a.ticker_symbol,
+        balance: a.pretty_balance_quote,
+        valueAtRisk: a.pretty_value_at_risk_quote,
+        spenderCount: a.spenders?.length || 0,
+        highestRisk: a.spenders?.reduce(
+          (max, s) =>
+            s.risk_factor?.includes("HIGH")
+              ? "HIGH"
+              : s.risk_factor?.includes("CONSIDER")
+              ? "MEDIUM"
+              : max,
+          "LOW"
+        ),
+      })),
+    };
+
+    setCache(cacheKey, result);
+    res.json(result);
+  } catch (err) {
+    console.error("Risk error:", err.message);
+    res.status(500).json({ error: "Failed to fetch risk data" });
+  }
+});
+
+// POST /api/whales/explain
+router.post("/explain", async (req, res) => {
+  try {
+    const { signal, walletScore, totalTrades } = req.body;
+    if (!signal) return res.status(400).json({ error: "Signal required" });
+
+    const prompt = `You are a concise crypto trading analyst. Analyze this whale trade signal in 2-3 sentences.
+
+Signal: ${signal.summary}
+Chain: ${signal.chain?.includes("BASE") ? "Base" : "Ethereum"}
+Amount: $${signal.amountIn?.toLocaleString() || "Unknown"}
+Wallet Score: ${walletScore || "Unknown"}/99
+Total Historical Trades: ${totalTrades || "Unknown"}
+
+Briefly cover: what this trade likely means, whether it's worth copying, and one key risk. Be direct and actionable.`;
+
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant",
+        max_tokens: 200,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+
+    const data = await response.json();
+    const explanation =
+      data?.choices?.[0]?.message?.content ||
+      "Analysis unavailable at this time.";
+
+    res.json({ success: true, explanation });
+  } catch (err) {
+    console.error("Explain error:", err.message);
+    res.status(500).json({ error: "Failed to generate explanation" });
   }
 });
 
