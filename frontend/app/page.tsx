@@ -454,36 +454,7 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Trust Score + Risk */}
-            {walletProfile?.risk && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px", marginBottom: "20px" }}>
-                <div style={{
-                  background: "var(--bg)", padding: "14px", borderRadius: "8px",
-                  border: `1px solid ${walletProfile.risk.trustScore >= 70 ? "var(--success)" : walletProfile.risk.trustScore >= 40 ? "var(--warning)" : "var(--danger)"}20`
-                }}>
-                  <p style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontFamily: "Space Mono", marginBottom: "6px" }}>
-                    TRUST SCORE
-                  </p>
-                  <p style={{
-                    fontSize: "1.4rem", fontWeight: 800, fontFamily: "Space Mono",
-                    color: walletProfile.risk.trustScore >= 70 ? "var(--success)" : walletProfile.risk.trustScore >= 40 ? "var(--warning)" : "var(--danger)"
-                  }}>
-                    {walletProfile.risk.trustScore}<span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>/100</span>
-                  </p>
-                </div>
-                <div style={{ background: "var(--bg)", padding: "14px", borderRadius: "8px" }}>
-                  <p style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontFamily: "Space Mono", marginBottom: "6px" }}>
-                    VALUE AT RISK
-                  </p>
-                  <p style={{ fontSize: "1.1rem", fontWeight: 800, fontFamily: "Space Mono", color: "var(--danger)" }}>
-                    ${walletProfile.risk.totalValueAtRisk?.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                  </p>
-                  <p style={{ fontSize: "0.65rem", color: "var(--text-muted)", fontFamily: "Space Mono", marginTop: "2px" }}>
-                    {walletProfile.risk.highRiskApprovals} high risk approvals
-                  </p>
-                </div>
-              </div>
-            )}
+            
 
             {/* Holdings balance */}
             <div style={{ background: "var(--bg)", borderRadius: "8px", padding: "16px", marginBottom: "20px" }}>

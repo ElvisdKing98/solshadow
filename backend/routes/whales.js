@@ -187,12 +187,24 @@ router.get("/profile", async (req, res) => {
     const cached = getCached(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
-    // Fetch balances + tx summary + recent txs in parallel
+    // Fetch balances + tx summary in parallel
     const [balances, txSummary] = await Promise.all([
       getWalletBalances(wallet, network),
       getTransactionSummary(wallet, network),
       
     ]);
+
+    // Fetch recent txs only if tx summary was fast
+    let recentTxs = [];
+    try {
+      const txRes = await Promise.race([
+        getRecentTransactions(wallet, network),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000))
+      ]);
+      recentTxs = txRes;
+    } catch {
+      console.log("Recent txs timed out — skipping");
+    }
 
     
     const realizedPnl = estimatePnlFrom24hChange(

@@ -37,15 +37,17 @@ export default function WhaleCard({
   const isBase = whale.network?.includes("base");
 
   const balanceDisplay =
-    typeof whale.totalBuyUsd === "number" && whale.totalBuyUsd > 0
-      ? whale.totalBuyUsd >= 1_000_000_000
-        ? `$${(whale.totalBuyUsd / 1_000_000_000).toFixed(2)}B`
-        : whale.totalBuyUsd >= 1_000_000
-        ? `$${(whale.totalBuyUsd / 1_000_000).toFixed(2)}M`
-        : whale.totalBuyUsd >= 1_000
-        ? `$${(whale.totalBuyUsd / 1_000).toFixed(1)}K`
-        : `$${whale.totalBuyUsd.toFixed(0)}`
-      : "—";
+  typeof whale.totalBuyUsd === "number" && whale.totalBuyUsd > 0
+    ? whale.totalBuyUsd >= 1_000_000_000_000  // 1 Trillion — clearly wrong
+      ? "—"  // Hide unrealistic values
+      : whale.totalBuyUsd >= 1_000_000_000
+      ? `$${(whale.totalBuyUsd / 1_000_000_000).toFixed(2)}B`
+      : whale.totalBuyUsd >= 1_000_000
+      ? `$${(whale.totalBuyUsd / 1_000_000).toFixed(2)}M`
+      : whale.totalBuyUsd >= 1_000
+      ? `$${(whale.totalBuyUsd / 1_000).toFixed(1)}K`
+      : `$${whale.totalBuyUsd.toFixed(0)}`
+    : "—";
 
   return (
     <div
