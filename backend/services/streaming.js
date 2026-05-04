@@ -25,8 +25,7 @@ export function startWalletStream(walletAddresses, onSignal) {
     connectionParams: () => ({
       Authorization: `Bearer ${API_KEY}`,
       "x-api-key": API_KEY,
-      token: API_KEY,
-      apiKey: API_KEY,
+      
     }),
     on: {
       connecting: () => console.log("🔌 Connecting to GoldRush stream..."),

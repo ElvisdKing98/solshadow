@@ -5,19 +5,34 @@ const API_KEY = process.env.GOLDRUSH_API_KEY;
 const BASE_URL = "https://api.covalenthq.com/v1";
 const GRAPHQL_URL = "https://streaming.goldrushdata.com/graphql";
 
+// FetchWithfetchWWithTimeout with 4 second timeout — prevents hanging requests
+async function fetchWWithTimeout(url, options = {}, ms = 4000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), ms);
+  try {
+    const res = await fetchWWithTimeout(url, { ...options, signal: controller.signal });
+    clearTimeout(id);
+    return res;
+  } catch (err) {
+    clearTimeout(id);
+    if (err.name === "AbortError") throw new Error("Request timed out");
+    throw err;
+  }
+}
+
 // Get top token holders
 export async function getTopHolders(tokenAddress, chain = "eth-mainnet") {
-  const response = await fetch(
+  const response = await fetchWWithTimeout(
     `${BASE_URL}/${chain}/tokens/${tokenAddress}/token_holders_v2/?key=${API_KEY}`
   );
   const data = await response.json();
-  if (data.error) throw new Error(data.error_message || "Failed to fetch holders");
+  if (data.error) throw new Error(data.error_message || "Failed to fetchWWithTimeout holders");
   return data?.data?.items || [];
 }
 
 // Get wallet token balances
 export async function getWalletBalances(walletAddress, chain = "eth-mainnet") {
-  const response = await fetch(
+  const response = await fetchWWithTimeout(
     `${BASE_URL}/${chain}/address/${walletAddress}/balances_v2/?key=${API_KEY}`
   );
   const data = await response.json();
@@ -26,7 +41,7 @@ export async function getWalletBalances(walletAddress, chain = "eth-mainnet") {
 
 // Get transaction summary — total count, first/last tx date
 export async function getTransactionSummary(walletAddress, chain = "eth-mainnet") {
-  const response = await fetch(
+  const response = await fetchWWithTimeout(
     `${BASE_URL}/${chain}/address/${walletAddress}/transactions_summary/?key=${API_KEY}`
   );
   const data = await response.json();
@@ -36,7 +51,7 @@ export async function getTransactionSummary(walletAddress, chain = "eth-mainnet"
 
 // Get recent transactions for PnL estimation
 export async function getRecentTransactions(walletAddress, chain = "eth-mainnet") {
-  const response = await fetch(
+  const response = await fetchWWithTimeout(
     `${BASE_URL}/${chain}/address/${walletAddress}/transactions_v3/?key=${API_KEY}&no-logs=true`
   );
   const data = await response.json();
@@ -101,7 +116,7 @@ export async function getTopTraders(tokenAddress, chainName = "ETH_MAINNET") {
     }
   `;
 
-  const response = await fetch(GRAPHQL_URL, {
+  const response = await fetchWWithTimeout(GRAPHQL_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -117,7 +132,7 @@ export async function getTopTraders(tokenAddress, chainName = "ETH_MAINNET") {
 
 // Get token approvals + risk assessment for a wallet
 export async function getWalletApprovals(walletAddress, chain = "eth-mainnet") {
-  const response = await fetch(
+  const response = await fetchWWithTimeout(
     `${BASE_URL}/${chain}/approvals/${walletAddress}/?key=${API_KEY}`
   );
   const data = await response.json();
@@ -146,7 +161,7 @@ export async function getWalletPnL(walletAddress, chainName = "ETH_MAINNET") {
     }
   `;
 
-  const response = await fetch(GRAPHQL_URL, {
+  const response = await fetchWWithTimeout(GRAPHQL_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

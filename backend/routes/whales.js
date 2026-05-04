@@ -39,21 +39,16 @@ function setCache(key, data) {
 // Background enrichment — updates cache with tx counts + PnL after response sent
 async function enrichWhalesInBackground(whales, network, cacheKey) {
   try {
-    console.log(`🔄 Background enrichment starting for ${whales.length} whales...`);
+    console.log(`🔄 Background enrichment for top 3...`);
+
+    // Only enrich top 3, only fetch tx summary (skip balances for speed)
     const enriched = await Promise.allSettled(
-      whales.map(async (whale) => {
+      whales.slice(0, 3).map(async (whale) => {
         try {
-          const [txSummary, balances] = await Promise.allSettled([
-            getTransactionSummary(whale.walletAddress, network),
-            getWalletBalances(whale.walletAddress, network),
-          ]);
-          const summary = txSummary.status === "fulfilled" ? txSummary.value : null;
-          const bals = balances.status === "fulfilled" ? balances.value : [];
-          const pnl = estimatePnlFrom24hChange(bals);
+          const txSummary = await getTransactionSummary(whale.walletAddress, network);
           return {
             ...whale,
-            tradesCount: summary?.total_count || 0,
-            realizedPnl: pnl,
+            tradesCount: txSummary?.total_count || 0,
           };
         } catch {
           return whale;
@@ -61,7 +56,6 @@ async function enrichWhalesInBackground(whales, network, cacheKey) {
       })
     );
 
-    // Update cache with enriched data
     const cached = cache.get(cacheKey);
     if (cached) {
       const updatedWhales = [...cached.data.whales];
@@ -74,10 +68,10 @@ async function enrichWhalesInBackground(whales, network, cacheKey) {
         data: { ...cached.data, whales: updatedWhales },
         timestamp: cached.timestamp,
       });
-      console.log(`✅ Background enrichment complete for ${cacheKey}`);
+      console.log(`✅ Enrichment complete`);
     }
   } catch (err) {
-    console.error("Background enrichment error:", err.message);
+    console.error("Enrichment error:", err.message);
   }
 }
 
@@ -120,8 +114,7 @@ router.get("/discover", async (req, res) => {
       const scored = topHolders.map((h, index) => {
         const decimals = h.contract_decimals ?? 18;
         const balanceHuman = parseFloat(h.balance) / Math.pow(10, decimals);
-        const safeBalance = balanceHuman > 1_000_000_000_000 ? 0 : balanceHuman;
-        const score = scoreFromBalance(safeBalance, index, total);
+        const score = scoreFromBalance(balanceHuman, index, total);
 
         let tier = "🐟 Fish";
         if (balanceHuman > 1_000_000_000) tier = "🐳 Mega Whale";
@@ -131,22 +124,16 @@ router.get("/discover", async (req, res) => {
 
         return {
           walletAddress: h.address,
-          totalBuyUsd: safeBalance,        // was balanceHuman
+          totalBuyUsd: balanceHuman,
           totalSellUsd: 0,
           realizedPnl: 0,
-          unrealizedPnl: safeBalance,      // was balanceHuman
+          unrealizedPnl: balanceHuman,
           tradesCount: 0,
-          balance: safeBalance.toLocaleString(undefined, { maximumFractionDigits: 0 }),
+          balance: balanceHuman.toLocaleString(undefined, { maximumFractionDigits: 0 }),
           token: h.contract_ticker_symbol,
           logoUrl: h.logo_url,
-          score: scoreFromBalance(safeBalance, index, total),  // was balanceHuman
-          tier: (() => {
-            if (safeBalance > 1_000_000_000) return "🐳 Mega Whale";
-            if (safeBalance > 100_000_000) return "🐋 Whale";
-            if (safeBalance > 10_000_000) return "🦈 Shark";
-            if (safeBalance > 1_000_000) return "🐬 Dolphin";
-            return "🐟 Fish";
-          })(),
+          score,
+          tier,
           source: "holders",
           network,
         };
@@ -201,22 +188,17 @@ router.get("/profile", async (req, res) => {
     if (cached) return res.json({ ...cached, cached: true });
 
     // Fetch balances + tx summary + recent txs in parallel
-    const [balances, txSummary, recentTxs] = await Promise.all([
+    const [balances, txSummary] = await Promise.all([
       getWalletBalances(wallet, network),
       getTransactionSummary(wallet, network),
-      getRecentTransactions(wallet, network),
+      
     ]);
 
-    // Try PnL from GraphQL
-    let pnlData = [];
-    try {
-      pnlData = await getWalletPnL(wallet, chain);
-    } catch (e) {}
-
-    const estimatedPnl = estimatePnlFromTxs(recentTxs, wallet);
-    const graphqlPnl = pnlData.reduce((sum, t) => sum + (t.pnl_realized_usd || 0), 0);
-    const realizedPnl = graphqlPnl !== 0 ? graphqlPnl : estimatedPnl;
-    const score = pnlData.length > 0 ? scoreWallet(pnlData) : 50;
+    
+    const realizedPnl = estimatePnlFrom24hChange(
+      balances
+    );
+    const score = 50;
 
     const topHoldings = balances
       .filter((b) => b.quote > 0)
@@ -252,7 +234,6 @@ router.get("/profile", async (req, res) => {
       lastTx: txSummary?.latest_transaction?.block_signed_at || null,
       topHoldings,
       recentTxs: formattedTxs,
-      pnl: pnlData.slice(0, 5),
     };
 
     setCache(cacheKey, result);
