@@ -39,16 +39,21 @@ function setCache(key, data) {
 // Background enrichment — updates cache with tx counts + PnL after response sent
 async function enrichWhalesInBackground(whales, network, cacheKey) {
   try {
-    console.log(`🔄 Background enrichment for top 3...`);
-
-    // Only enrich top 3, only fetch tx summary (skip balances for speed)
+    console.log(`🔄 Background enrichment starting for ${whales.length} whales...`);
     const enriched = await Promise.allSettled(
-      whales.slice(0, 3).map(async (whale) => {
+      whales.map(async (whale) => {
         try {
-          const txSummary = await getTransactionSummary(whale.walletAddress, network);
+          const [txSummary, balances] = await Promise.allSettled([
+            getTransactionSummary(whale.walletAddress, network),
+            getWalletBalances(whale.walletAddress, network),
+          ]);
+          const summary = txSummary.status === "fulfilled" ? txSummary.value : null;
+          const bals = balances.status === "fulfilled" ? balances.value : [];
+          const pnl = estimatePnlFrom24hChange(bals);
           return {
             ...whale,
-            tradesCount: txSummary?.total_count || 0,
+            tradesCount: summary?.total_count || 0,
+            realizedPnl: pnl,
           };
         } catch {
           return whale;
@@ -56,6 +61,7 @@ async function enrichWhalesInBackground(whales, network, cacheKey) {
       })
     );
 
+    // Update cache with enriched data
     const cached = cache.get(cacheKey);
     if (cached) {
       const updatedWhales = [...cached.data.whales];
@@ -68,10 +74,10 @@ async function enrichWhalesInBackground(whales, network, cacheKey) {
         data: { ...cached.data, whales: updatedWhales },
         timestamp: cached.timestamp,
       });
-      console.log(`✅ Enrichment complete`);
+      console.log(`✅ Background enrichment complete for ${cacheKey}`);
     }
   } catch (err) {
-    console.error("Enrichment error:", err.message);
+    console.error("Background enrichment error:", err.message);
   }
 }
 
@@ -187,30 +193,23 @@ router.get("/profile", async (req, res) => {
     const cached = getCached(cacheKey);
     if (cached) return res.json({ ...cached, cached: true });
 
-    // Fetch balances + tx summary in parallel
-    const [balances, txSummary] = await Promise.all([
+    // Fetch balances + tx summary + recent txs in parallel
+    const [balances, txSummary, recentTxs] = await Promise.all([
       getWalletBalances(wallet, network),
       getTransactionSummary(wallet, network),
-      
+      getRecentTransactions(wallet, network),
     ]);
 
-    // Fetch recent txs only if tx summary was fast
-    let recentTxs = [];
+    // Try PnL from GraphQL
+    let pnlData = [];
     try {
-      const txRes = await Promise.race([
-        getRecentTransactions(wallet, network),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 3000))
-      ]);
-      recentTxs = txRes;
-    } catch {
-      console.log("Recent txs timed out — skipping");
-    }
+      pnlData = await getWalletPnL(wallet, chain);
+    } catch (e) {}
 
-    
-    const realizedPnl = estimatePnlFrom24hChange(
-      balances
-    );
-    const score = 50;
+    const estimatedPnl = estimatePnlFromTxs(recentTxs, wallet);
+    const graphqlPnl = pnlData.reduce((sum, t) => sum + (t.pnl_realized_usd || 0), 0);
+    const realizedPnl = graphqlPnl !== 0 ? graphqlPnl : estimatedPnl;
+    const score = pnlData.length > 0 ? scoreWallet(pnlData) : 50;
 
     const topHoldings = balances
       .filter((b) => b.quote > 0)
@@ -246,6 +245,7 @@ router.get("/profile", async (req, res) => {
       lastTx: txSummary?.latest_transaction?.block_signed_at || null,
       topHoldings,
       recentTxs: formattedTxs,
+      pnl: pnlData.slice(0, 5),
     };
 
     setCache(cacheKey, result);
