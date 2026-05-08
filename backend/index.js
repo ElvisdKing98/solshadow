@@ -11,10 +11,13 @@ const PORT = process.env.PORT || 4000;
 app.use(cors({
   origin: [
     "http://localhost:3000",
-    "https://solshadow.vercel.app/",
+    "https://solshadow.vercel.app",
+    "https://solshadow-git-main-elvisdking98.vercel.app",
+    /\.vercel\.app$/,  // allows all vercel preview URLs too
   ],
   credentials: true,
 }));
+
 app.use(express.json());
 
 // Routes
