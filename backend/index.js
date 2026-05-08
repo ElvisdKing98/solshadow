@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 4000;
 
 app.use(cors({
   origin: [
-    "http://localhost:3000",
+    "http://localhost:4000",
     "https://solshadow.vercel.app", // your actual Vercel URL
   ],
   credentials: true,
