@@ -378,7 +378,7 @@ export default function Home() {
             Powered by GoldRush × Covalent
           </p>
           <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", fontFamily: "Space Mono" }}>
-            SolShadow — Hackathon Build 2025
+            SolShadow — Hackathon Build 2026
           </p>
         </footer>
       </div>
